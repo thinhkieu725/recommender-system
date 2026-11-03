@@ -20,5 +20,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    # --- PART 1: Data, protocol, baselines ---
+    part_1.check_data_dir(args.data_dir)
+
 if __name__ == "__main__":
     main()
