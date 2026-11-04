@@ -1,6 +1,8 @@
 from pathlib import Path
 import pandas as pd
 
+from part_1.utils import read_dat_file
+
 REQUIRED_DATA_FILES = ("ratings.dat", "movies.dat", "users.dat")
 
 
@@ -20,7 +22,25 @@ def load_data(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
     """
     Load the users, movies, and ratings data from the specified directory.
     """
-    raise NotImplementedError("Implement the load_data function.")
+    users = read_dat_file(
+        data_dir / "users.dat",
+        {
+            "user_id": int,
+            "gender": str,
+            "age": int,
+            "occupation": int,
+            "zip_code": str,
+        },
+    )
+    movies = read_dat_file(
+        data_dir / "movies.dat",
+        {"movie_id": int, "title": str, "genres": str},
+    )
+    ratings = read_dat_file(
+        data_dir / "ratings.dat",
+        {"user_id": int, "movie_id": int, "rating": int, "timestamp": int},
+    )
+    return users, movies, ratings
 
 
 def characterize_data(users: pd.DataFrame, movies: pd.DataFrame, ratings: pd.DataFrame) -> None:
