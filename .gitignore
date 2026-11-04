@@ -2,3 +2,5 @@ slides/
 data/
 
 *.pdf
+__pycache__/
+.misc/

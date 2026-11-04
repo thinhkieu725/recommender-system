@@ -1,9 +1,7 @@
 import argparse
 from pathlib import Path
 
-import part_1
-
-REQUIRED_DATA_FILES = ("ratings.dat", "movies.dat", "users.dat")
+from part_1 import run_part_1
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -21,7 +19,7 @@ def main() -> None:
     args = parse_args()
 
     # --- PART 1: Data, protocol, baselines ---
-    part_1.check_data_dir(args.data_dir)
+    run_part_1.run(args.data_dir)
 
 if __name__ == "__main__":
     main()
