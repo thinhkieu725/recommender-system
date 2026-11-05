@@ -15,6 +15,30 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+def run_final_evaluation(
+    predictions_1: pd.DataFrame,
+    predictions_2: pd.DataFrame,
+    predictions_3: pd.DataFrame,
+    ground_truth: pd.DataFrame,
+    catalogue: pd.Series,
+    k: int = 10,
+    threshold: int = 4,
+) -> None:
+    baselines = [
+        ("Item-based kNN", predictions_1),
+        ("Most-rated Item", predictions_2),
+        ("Most positive rated Item", predictions_3)
+    ]
+
+    for model_name, predictions in baselines:
+        print(f"\n=========={model_name}==========")
+        p1.metric_evaluation(
+            predictions=predictions,
+            ground_truth=ground_truth,
+            catalogue=catalogue,
+            k=k,
+            relevance_threshold=threshold,
+        )
 def main() -> None:
     args = parse_args()
 
@@ -31,14 +55,15 @@ def main() -> None:
     test_predictions = item_based_knn_model.test(test_set)
 
     test_predictions_df = pd.DataFrame(
-    {
-        "user_id": [p.uid for p in test_predictions],
-        "movie_id": [p.iid for p in test_predictions],
-        "rating": [p.r_ui for p in test_predictions],
-        "predicted_rating": [p.est for p in test_predictions],
-        "was_impossible": [p.details["was_impossible"] for p in test_predictions],
-    }
+        {
+            "user_id": [p.uid for p in test_predictions],
+            "movie_id": [p.iid for p in test_predictions],
+            "rating": [p.r_ui for p in test_predictions],
+            "predicted_rating": [p.est for p in test_predictions],
+            "was_impossible": [p.details["was_impossible"] for p in test_predictions],
+        }
     )
+
     test_rankings = test_predictions_df[~test_predictions_df["was_impossible"]].sort_values(
         ["user_id", "predicted_rating", "movie_id"],
         ascending=[True, False, True],
@@ -46,48 +71,34 @@ def main() -> None:
     )
     test_rankings["rank"] = test_rankings.groupby("user_id").cumcount() + 1
 
-    # TODO: Most popular baseline
+    # Most-popular baseline
     most_rated_ranking = p1.most_rated_baseline(ratings_train, movies)
     most_positive_ranking = p1.most_positively_rated(ratings_train, movies)
 
-    print(
-        most_rated_ranking.head(10).merge(
-            movies[["movie_id", "title"]],
-            on="movie_id",
-            how="left",
-        )
-    )
-
-    print(
-        most_positive_ranking.head(10).merge(
-        movies[["movie_id", "title"]],
-        on="movie_id",
-        how="left",
-        )
-    )
-
-    validation_users = ratings_validation["user_id"].unique()
+    test_users = ratings_test["user_id"].unique()
     # Output to pass to evaluate
     most_rated_recommendations = p1.recommend_popular(
         ranking=most_rated_ranking,
         ratings_history=ratings_train,
-        user_ids=validation_users,
+        user_ids=test_users,
         top_n=10,
     )
     most_positive_recommendations = p1.recommend_popular(
         ranking=most_positive_ranking,
         ratings_history=ratings_train,
-        user_ids=validation_users,
+        user_ids=test_users,
         top_n=10,
     )
-    # TODO: Evaluation
 
-    p1.metric_evaluation(
-        predictions=test_rankings,
-        ground_truth=ratings_validation,
-        catalogue=movies["movie_id"],
+    # Evaluation
+    run_final_evaluation(
+        test_rankings,
+        most_rated_recommendations,
+        most_positive_recommendations,
+        ratings_test,
+        movies["movie_id"],
         k=10,
-        relevance_threshold=4,
+        threshold=4
     )
 
 if __name__ == "__main__":
