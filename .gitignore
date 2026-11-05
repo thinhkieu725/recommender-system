@@ -1,6 +1,7 @@
 slides/
 data/
-
+.idea
+.venv
 *.pdf
 __pycache__/
 .misc/
