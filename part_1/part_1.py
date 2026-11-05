@@ -1,10 +1,14 @@
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
+from surprise import Dataset, KNNBasic, Prediction, Reader, accuracy
 from part_1.utils import read_dat_file
 
 REQUIRED_DATA_FILES = ("ratings.dat", "movies.dat", "users.dat")
 
+# Tuned hyperparameters
+NEIGHBORHOOD_SIZE_K = 40
+SIMILARITY_MEASURE = "cosine"  # "cosine", "msd", "pearson", "pearson_baseline"
 
 def check_data_dir(data_dir: Path) -> None:
     missing_files = [
@@ -240,3 +244,56 @@ def split_data_temporally(ratings: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
     ]
     test = ratings[ratings["timestamp"] >= test_start]
     return train, validation, test
+
+
+def print_prediction_quality(split_name: str, predictions: list[Prediction]) -> None:
+    rmse = accuracy.rmse(predictions, verbose=False)
+    # Surprise predicts the global mean when a user or item is unknown or has no
+    # neighbors. A temporal split creates many such cases, and they affect the RMSE.
+    n_impossible = sum(
+        prediction.details["was_impossible"] for prediction in predictions
+    )
+
+    print(f"{split_name} RMSE: {rmse:.4f}")
+    print(f"{split_name} impossible predictions: {n_impossible} of {len(predictions)}")
+
+
+def item_based_knn_baseline(ratings_train: pd.DataFrame, ratings_validation: pd.DataFrame, ratings_test: pd.DataFrame) -> None:
+    """
+    Implement an item-based kNN baseline recommender system.
+
+    Fit on train and evaluate on validation, then refit on train plus validation
+    and evaluate on test, so test ratings stay unseen and later history is used.
+    """
+    k = NEIGHBORHOOD_SIZE_K
+    similarity = SIMILARITY_MEASURE
+
+    print("\n========== ITEM-BASED KNN ==========")
+    print(f"k: {k}")
+    print(f"Similarity: {similarity}")
+
+    rating_columns = ["user_id", "movie_id", "rating"]
+
+    reader = Reader(rating_scale=(1, 5))
+    training_set = Dataset.load_from_df(ratings_train[rating_columns], reader)
+    training_set = training_set.build_full_trainset()
+
+    # user_based=False makes the similarities item-item instead of user-user.
+    model = KNNBasic(
+        k=k,
+        sim_options={"name": similarity, "user_based": False},
+        verbose=False,
+    )
+    model.fit(training_set)
+
+    validation_set = list(ratings_validation[rating_columns].itertuples(index=False, name=None))
+    validation_predictions = model.test(validation_set)
+    print_prediction_quality("Validation", validation_predictions)
+
+    # Neighborhood size k and similarity measure are chosen before reading this result, so test stays unbiased.
+    # TODO: to be adapted with the evaluation protocol to be implemented.
+    test_set = list(ratings_test[rating_columns].itertuples(index=False, name=None))
+    test_predictions = model.test(test_set)
+    print_prediction_quality("Test", test_predictions)
+
+    return model

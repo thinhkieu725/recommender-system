@@ -24,6 +24,11 @@ def main() -> None:
     p1.characterize_data(users, movies, ratings)
 
     ratings_train, ratings_validation, ratings_test = p1.split_data_temporally(ratings)
+    item_based_knn_model = p1.item_based_knn_baseline(ratings_train, ratings_validation, ratings_test)
+
+    # TODO: Most popular baseline
+
+    # TODO: Evaluation
 
 if __name__ == "__main__":
     main()
