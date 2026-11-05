@@ -1,8 +1,10 @@
 from pathlib import Path
+import math
 import pandas as pd
 import matplotlib.pyplot as plt
 from surprise import Dataset, KNNBasic, Prediction, Reader, accuracy
 from part_1.utils import read_dat_file
+
 
 REQUIRED_DATA_FILES = ("ratings.dat", "movies.dat", "users.dat")
 
@@ -381,8 +383,6 @@ def recommend_popular(
 
     return pd.concat(recommendations, ignore_index=True)[columns]
 
-import math
-
 def _precision_at_k(
         recommended: list[int], 
         relevant: set[int], 
@@ -422,7 +422,7 @@ def _ndcg_at_k(
     """
     # Relevance of recommended movies, in recommendation order.
     predicted_relevances = [
-        user_ratings.get(movie_id, 0) - 1
+        user_ratings.get(movie_id, 1) - 1
         for movie_id in recommended[:k]
     ]
 
@@ -574,7 +574,6 @@ def metric_evaluation(
             print(f"{metric}: {value}")
 
     return results
-
 
 
 
