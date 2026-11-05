@@ -27,7 +27,39 @@ def main() -> None:
     item_based_knn_model = p1.item_based_knn_baseline(ratings_train, ratings_validation, ratings_test)
 
     # TODO: Most popular baseline
+    most_rated_ranking = p1.most_rated_baseline(ratings_train, movies)
+    most_positive_ranking = p1.most_positively_rated(ratings_train, movies)
 
+    print(
+        most_rated_ranking.head(10).merge(
+            movies[["movie_id", "title"]],
+            on="movie_id",
+            how="left",
+        )
+    )
+
+    print(
+        most_positive_ranking.head(10).merge(
+        movies[["movie_id", "title"]],
+        on="movie_id",
+        how="left",
+        )
+    )
+
+    validation_users = ratings_validation["user_id"].unique()
+    # Output to pass to evaluate
+    most_rated_recommendations = p1.recommend_popular(
+        ranking=most_rated_ranking,
+        ratings_history=ratings_train,
+        user_ids=validation_users,
+        top_n=10,
+    )
+    most_positive_recommendations = p1.recommend_popular(
+        ranking=most_positive_ranking,
+        ratings_history=ratings_train,
+        user_ids=validation_users,
+        top_n=10,
+    )
     # TODO: Evaluation
 
 if __name__ == "__main__":

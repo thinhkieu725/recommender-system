@@ -54,7 +54,6 @@ def characterize_data(users: pd.DataFrame, movies: pd.DataFrame, ratings: pd.Dat
     """
 
     # 0. Input validation
-
     datasets = {
         "users": users,
         "movies": movies,
@@ -226,7 +225,7 @@ def characterize_data(users: pd.DataFrame, movies: pd.DataFrame, ratings: pd.Dat
 
         plt.xticks(rotation=45)
         plt.tight_layout()
-        plt.show()
+
 
 
 def split_data_temporally(ratings: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -297,3 +296,88 @@ def item_based_knn_baseline(ratings_train: pd.DataFrame, ratings_validation: pd.
     print_prediction_quality("Test", test_predictions)
 
     return model
+
+def most_rated_baseline(
+        ratings_train: pd.DataFrame,
+        movies: pd.DataFrame,
+) -> pd.DataFrame:
+    """Rank catalogue movies by their number of training ratings."""
+    counts = ratings_train.groupby("movie_id").size()
+
+    ranking = movies[["movie_id"]].drop_duplicates().copy()
+    ranking["score"] = (
+        ranking["movie_id"].map(counts).fillna(0).astype(int)
+    )
+
+    return ranking.sort_values(
+        ["score", "movie_id"],
+        ascending=[False, True],
+        ignore_index=True,
+    )
+
+
+def most_positively_rated(
+        ratings_train: pd.DataFrame,
+        movies: pd.DataFrame,
+        positive_threshold: int = 4,
+) -> pd.DataFrame:
+    """Rank catalogue movies by their number of positive training ratings."""
+    positive_ratings = ratings_train[
+        ratings_train["rating"] >= positive_threshold
+        ]
+    counts = positive_ratings.groupby("movie_id").size()
+
+    ranking = movies[["movie_id"]].drop_duplicates().copy()
+    ranking["score"] = (
+        ranking["movie_id"].map(counts).fillna(0).astype(int)
+    )
+
+    return ranking.sort_values(
+        ["score", "movie_id"],
+        ascending=[False, True],
+        ignore_index=True,
+    )
+
+def recommend_popular(
+        ranking: pd.DataFrame,
+        ratings_history: pd.DataFrame,
+        user_ids,
+        top_n: int = 10,
+) -> pd.DataFrame:
+    """Recommend the highest-ranked movies each user has not rated."""
+    if top_n < 1:
+        raise ValueError("top_n must be at least 1.")
+
+    # Include every historical rating, including low ratings.
+    seen_by_user = (
+        ratings_history.groupby("user_id")["movie_id"]
+        .agg(set)
+        .to_dict()
+    )
+
+    recommendations = []
+
+    for user_id in pd.Series(user_ids).unique():
+        seen_movies = seen_by_user.get(user_id, set())
+
+        user_recommendations = (
+            ranking.loc[
+                ~ranking["movie_id"].isin(seen_movies),
+                ["movie_id", "score"],
+            ]
+            .head(top_n)
+            .copy()
+        )
+
+        user_recommendations.insert(0, "user_id", user_id)
+        user_recommendations["rank"] = range(
+            1, len(user_recommendations) + 1
+        )
+        recommendations.append(user_recommendations)
+
+    columns = ["user_id", "movie_id", "rank", "score"]
+
+    if not recommendations:
+        return pd.DataFrame(columns=columns)
+
+    return pd.concat(recommendations, ignore_index=True)[columns]
