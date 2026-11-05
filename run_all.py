@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from part_1 import run_part_1
+import part_1.part_1 as p1
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -19,7 +19,11 @@ def main() -> None:
     args = parse_args()
 
     # --- PART 1: Data, protocol, baselines ---
-    run_part_1.run(args.data_dir)
+    p1.check_data_dir(args.data_dir)
+    users, movies, ratings = p1.load_data(args.data_dir)
+    p1.characterize_data(users, movies, ratings)
+
+    ratings_train, ratings_validation, ratings_test = p1.split_data_temporally(ratings)
 
 if __name__ == "__main__":
     main()

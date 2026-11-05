@@ -240,20 +240,3 @@ def split_data_temporally(ratings: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
     ]
     test = ratings[ratings["timestamp"] >= test_start]
     return train, validation, test
-
-
-def run(data_dir: Path) -> None:
-    """
-    Entry point for running part 1: data, protocol, and baselines.
-    """
-    check_data_dir(data_dir)
-    users, movies, ratings = load_data(data_dir)
-    characterize_data(users, movies, ratings)
-
-    ratings_train, ratings_validation, ratings_test = split_data_temporally(ratings)
-
-    # TODO: Item-based kNN baseline.
-
-    # TODO: Most popular baseline.
-
-    raise NotImplementedError("Implement the run function of part 1.")
