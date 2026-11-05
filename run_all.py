@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-
+import pandas as pd
 import part_1.part_1 as p1
 
 def parse_args() -> argparse.Namespace:
@@ -25,6 +25,26 @@ def main() -> None:
 
     ratings_train, ratings_validation, ratings_test = p1.split_data_temporally(ratings)
     item_based_knn_model = p1.item_based_knn_baseline(ratings_train, ratings_validation, ratings_test)
+
+    rating_columns = ["user_id", "movie_id", "rating"]
+    test_set = list(ratings_test[rating_columns].itertuples(index=False, name=None))
+    test_predictions = item_based_knn_model.test(test_set)
+
+    test_predictions_df = pd.DataFrame(
+    {
+        "user_id": [p.uid for p in test_predictions],
+        "movie_id": [p.iid for p in test_predictions],
+        "rating": [p.r_ui for p in test_predictions],
+        "predicted_rating": [p.est for p in test_predictions],
+        "was_impossible": [p.details["was_impossible"] for p in test_predictions],
+    }
+    )
+    test_rankings = test_predictions_df[~test_predictions_df["was_impossible"]].sort_values(
+        ["user_id", "predicted_rating", "movie_id"],
+        ascending=[True, False, True],
+        ignore_index=True,
+    )
+    test_rankings["rank"] = test_rankings.groupby("user_id").cumcount() + 1
 
     # TODO: Most popular baseline
     most_rated_ranking = p1.most_rated_baseline(ratings_train, movies)
@@ -61,6 +81,14 @@ def main() -> None:
         top_n=10,
     )
     # TODO: Evaluation
+
+    p1.metric_evaluation(
+        predictions=test_rankings,
+        ground_truth=ratings_validation,
+        catalogue=movies["movie_id"],
+        k=10,
+        relevance_threshold=4,
+    )
 
 if __name__ == "__main__":
     main()
