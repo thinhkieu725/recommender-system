@@ -225,8 +225,7 @@ def characterize_data(users: pd.DataFrame, movies: pd.DataFrame, ratings: pd.Dat
 
         plt.xticks(rotation=45)
         plt.tight_layout()
-
-
+        plt.show()
 
 def split_data_temporally(ratings: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
@@ -381,3 +380,201 @@ def recommend_popular(
         return pd.DataFrame(columns=columns)
 
     return pd.concat(recommendations, ignore_index=True)[columns]
+
+import math
+
+def _precision_at_k(
+        recommended: list[int], 
+        relevant: set[int], 
+        k: int = 10
+    )-> float:
+    """Fraction of the top-k recommendations that are relevant."""
+    hits = len(set(recommended[:k]) & relevant)
+    return hits / k
+
+def _recall_at_k(
+        recommended: list[int], 
+        relevant: set[int], 
+        k: int = 10
+    )-> float:
+    """Fraction of all relevant movies found in the top-k."""
+    hits = len(set(recommended[:k]) & relevant)
+    return hits / len(relevant)
+
+def _dcg(
+        relevances: list[int], 
+        k: int = 10
+    )-> float:
+    """Calculate Discounted Cumulative Gain."""
+    return sum(
+        (2 ** relevance - 1) / math.log2(rank + 2)
+        for rank, relevance in enumerate(relevances[:k])
+    )
+
+def _ndcg_at_k(
+        recommended: list[int], 
+        user_ratings: dict[int, int], 
+        k: int = 10
+    )-> float:
+    """
+    Calculate NDCG using graded relevance.
+    Rating 1 -> relevance 0, ..., rating 5 -> relevance 4.
+    """
+    # Relevance of recommended movies, in recommendation order.
+    predicted_relevances = [
+        user_ratings.get(movie_id, 0) - 1
+        for movie_id in recommended[:k]
+    ]
+
+    dcg = _dcg(predicted_relevances, k)
+
+    # Ideal ranking: sort all future ratings from highest to lowest.
+    ideal_relevances = sorted(
+        [rating - 1 for rating in user_ratings.values()],
+        reverse=True
+    )
+
+    idcg = _dcg(ideal_relevances, k)
+
+    return dcg / idcg if idcg > 0 else 0.0
+
+
+def metric_evaluation(
+    predictions: pd.DataFrame,
+    ground_truth: pd.DataFrame,
+    catalogue: pd.Series,
+    k: int = 10,
+    relevance_threshold: int = 4,
+) -> dict[str, float | int]:
+    
+    """
+    Evaluate top-k recommendations.
+
+    predictions:
+        DataFrame with user_id, movie_id, rank.
+
+    ground_truth:
+        DataFrame with user_id, movie_id, rating.
+
+    catalogue:
+        Series containing all movie IDs.
+    """
+
+    # 1. Validate required columns.
+    prediction_columns = {"user_id", "movie_id", "rank"}
+    ground_truth_columns = {"user_id", "movie_id", "rating"}
+
+    if not prediction_columns.issubset(predictions.columns):
+        raise ValueError("Predictions must contain user_id, movie_id, rank.")
+
+    if not ground_truth_columns.issubset(ground_truth.columns):
+        raise ValueError("Ground truth must contain user_id, movie_id, rating.")
+
+    if k < 1:
+        raise ValueError("k must be at least 1.")
+
+    if predictions.duplicated(["user_id", "movie_id"]).any():
+        raise ValueError("Duplicate user/movie recommendations found.")
+
+    if ground_truth.duplicated(["user_id", "movie_id"]).any():
+        raise ValueError("Duplicate user/movie ground-truth ratings found.")
+
+    # 2. Prepare catalogue and recommendations.
+    catalogue = set(catalogue)
+
+    predictions = predictions[
+        predictions["movie_id"].isin(catalogue)
+    ].copy()
+
+    predictions = predictions.sort_values(["user_id", "rank"])
+
+    top_k = predictions.groupby("user_id", sort=False).head(k)
+
+    # 3. Prepare ground truth.
+    # Map each user to their future movie ratings.
+    user_ratings = {
+        user_id: dict(zip(group["movie_id"], group["rating"]))
+        for user_id, group in ground_truth.groupby("user_id")
+    }
+
+    # Only ratings >= threshold count as relevant for Precision and Recall.
+    relevant = {
+        user_id: {
+            movie_id
+            for movie_id, rating in ratings.items()
+            if rating >= relevance_threshold
+        }
+        for user_id, ratings in user_ratings.items()
+    }
+
+    # Exclude users without relevant future ratings from accuracy averages.
+    evaluation_users = {
+        user_id
+        for user_id, movies in relevant.items()
+        if movies
+    }
+
+    # 4. Calculate metrics for each evaluation user.
+    recommended_by_user = {
+        user_id: group["movie_id"].tolist()
+        for user_id, group in top_k.groupby("user_id")
+    }
+
+    precision_scores = []
+    recall_scores = []
+    ndcg_scores = []
+
+    for user_id in evaluation_users:
+        recommended = recommended_by_user.get(user_id, [])
+
+        precision_scores.append(
+            _precision_at_k(recommended, relevant[user_id], k)
+        )
+
+        recall_scores.append(
+            _recall_at_k(recommended, relevant[user_id], k)
+        )
+
+        ndcg_scores.append(
+            _ndcg_at_k(recommended, user_ratings[user_id], k)
+        )
+
+    # 5. Calculate catalogue coverage.
+    recommended_movies = set(top_k["movie_id"])
+    coverage = (
+        len(recommended_movies) / len(catalogue)
+        if catalogue else 0.0
+    )
+
+    # 6. Return results.
+    results = {
+        f"Precision@{k}": (
+            sum(precision_scores) / len(precision_scores)
+            if precision_scores else 0.0
+        ),
+        f"Recall@{k}": (
+            sum(recall_scores) / len(recall_scores)
+            if recall_scores else 0.0
+        ),
+        f"NDCG@{k}": (
+            sum(ndcg_scores) / len(ndcg_scores)
+            if ndcg_scores else 0.0
+        ),
+        "Catalogue Coverage": coverage,
+        "Evaluated Users": len(evaluation_users),
+        "Excluded Users": len(user_ratings) - len(evaluation_users),
+    }
+
+    print("\n========== EVALUATION RESULTS ==========")
+
+    for metric, value in results.items():
+        if isinstance(value, float):
+            print(f"{metric}: {value:.4f}")
+        else:
+            print(f"{metric}: {value}")
+
+    return results
+
+
+
+
