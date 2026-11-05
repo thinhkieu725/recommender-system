@@ -224,7 +224,22 @@ def characterize_data(users: pd.DataFrame, movies: pd.DataFrame, ratings: pd.Dat
         plt.tight_layout()
         plt.show()
 
-    # raise NotImplementedError("Implement the characterize_data function.")
+
+def split_data_temporally(ratings: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Split the ratings data 80/10/10 into training, validation, and test sets
+    using two global timestamp cuts.
+    """
+    sorted_timestamps = ratings["timestamp"].sort_values().to_numpy()
+    validation_start = sorted_timestamps[int(len(sorted_timestamps) * 0.8)]
+    test_start = sorted_timestamps[int(len(sorted_timestamps) * 0.9)]
+
+    train = ratings[ratings["timestamp"] < validation_start]
+    validation = ratings[
+        (ratings["timestamp"] >= validation_start) & (ratings["timestamp"] < test_start)
+    ]
+    test = ratings[ratings["timestamp"] >= test_start]
+    return train, validation, test
 
 
 def run(data_dir: Path) -> None:
@@ -235,7 +250,7 @@ def run(data_dir: Path) -> None:
     users, movies, ratings = load_data(data_dir)
     characterize_data(users, movies, ratings)
 
-    # TODO: Temporal train/valid/test split.
+    ratings_train, ratings_validation, ratings_test = split_data_temporally(ratings)
 
     # TODO: Item-based kNN baseline.
 
