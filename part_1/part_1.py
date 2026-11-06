@@ -3,15 +3,17 @@ import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from surprise import Dataset, KNNBasic, Prediction, Reader, accuracy
+from surprise import Dataset, KNNWithMeans, Prediction, Reader, accuracy
 from part_1.utils import read_dat_file
 
 
 REQUIRED_DATA_FILES = ("ratings.dat", "movies.dat", "users.dat")
 
 # Tuned hyperparameters
-NEIGHBORHOOD_SIZE_K = 40
-SIMILARITY_MEASURE = "cosine"  # "cosine", "msd", "pearson", "pearson_baseline"
+# k tuned on validation NDCG@10 (warm users, train-only fit) over 5-200.
+NEIGHBORHOOD_SIZE_K = 20
+SIMILARITY_MEASURE = "pearson"  # "cosine", "msd", "pearson", "pearson_baseline"
+MIN_SUPPORT = 10
 
 def check_data_dir(data_dir: Path) -> None:
     missing_files = [
@@ -264,7 +266,7 @@ def item_based_knn_baseline(
         ratings_train: pd.DataFrame, 
         ratings_validation: pd.DataFrame, 
         movies: pd.DataFrame
-    ) -> KNNBasic:
+    ) -> KNNWithMeans:
     """
     Implement an item-based kNN baseline recommender system.
 
@@ -273,10 +275,12 @@ def item_based_knn_baseline(
     """
     k = NEIGHBORHOOD_SIZE_K
     similarity = SIMILARITY_MEASURE
+    min_support = MIN_SUPPORT
 
     print("\n========== ITEM-BASED KNN ==========")
     print(f"k: {k}")
     print(f"Similarity: {similarity}")
+    print(f"Min support: {min_support}")
 
     rating_columns = ["user_id", "movie_id", "rating"]
 
@@ -284,10 +288,16 @@ def item_based_knn_baseline(
     training_set = Dataset.load_from_df(ratings_train[rating_columns], reader)
     training_set = training_set.build_full_trainset()
 
-    # user_based=False makes the similarities item-item instead of user-user.
-    model = KNNBasic(
+    # KNNWithMeans predicts from mean-centred neighbour ratings.
+    # user_based=False makes the similarities item-item instead of user-user,
+    # so the means are item means.
+    model = KNNWithMeans(
         k=k,
-        sim_options={"name": similarity, "user_based": False},
+        sim_options={
+            "name": similarity,
+            "user_based": False,
+            "min_support": min_support,
+        },
         verbose=False,
     )
     model.fit(training_set)
@@ -320,7 +330,7 @@ def item_based_knn_baseline(
 
 
 def item_based_knn_recommend(
-        model: KNNBasic,
+        model: KNNWithMeans,
         ratings_history: pd.DataFrame,
         user_ids,
         catalogue: pd.Series,
@@ -329,15 +339,22 @@ def item_based_knn_recommend(
     """
     Recommend the top-n unseen catalogue movies per user with item-based kNN.
 
-    Every candidate movie is scored with the KNNBasic formula: the weighted
-    mean of the user's ratings on the k most similar movies they rated,
-    counting only positive similarities. This matches model.predict, but
-    runs on the whole catalogue at once instead of one pair at a time.
+    Every candidate movie i is scored with the item-based KNNWithMeans
+    formula over the k most similar movies j the user rated, counting only
+    positive similarities:
+
+        score(u, i) = mean(i) + sum(sim(i, j) * (r(u, j) - mean(j))) / sum(sim(i, j))
+
+    This matches model.predict, but runs on the whole catalogue at once
+    instead of one pair at a time.
 
     Movies the model never saw, movies without a positive neighbour, and
     users the model never saw get no score, so some users receive fewer
-    than top_n recommendations. The output has the same columns as
-    recommend_popular: user_id, movie_id, rank, score.
+    than top_n recommendations. model.predict would fall back to the item
+    mean for a movie without a positive neighbour; that is left out here,
+    because with min_support it would rank barely rated movies by their
+    noisy mean. The output has the same columns as recommend_popular:
+    user_id, movie_id, rank, score.
     """
     if top_n < 1:
         raise ValueError("top_n must be at least 1.")
@@ -366,6 +383,9 @@ def item_based_knn_recommend(
         dtype=int,
     )
     candidate_sim = model.sim[candidate_inner]
+    # With user_based=False, model.means holds the item means.
+    item_means = np.asarray(model.means)
+    candidate_means = item_means[candidate_inner]
 
     inner_by_user = {
         trainset.to_raw_uid(inner_id): inner_id
@@ -380,24 +400,28 @@ def item_based_knn_recommend(
             continue
 
         rated_inner, rated_ratings = map(np.array, zip(*trainset.ur[inner_uid]))
-        similarities = candidate_sim[:, rated_inner.astype(int)]
-        ratings = np.broadcast_to(rated_ratings, similarities.shape)
+        rated_inner = rated_inner.astype(int)
+        similarities = candidate_sim[:, rated_inner]
+        # The user's rating of each neighbour, relative to that neighbour's mean.
+        deviations = np.broadcast_to(
+            rated_ratings - item_means[rated_inner], similarities.shape
+        )
 
         # Keep each candidate's k most similar rated movies. The stable sort
-        # breaks similarity ties in rating order, as KNNBasic does.
+        # breaks similarity ties in rating order, as KNNWithMeans does.
         if similarities.shape[1] > k:
             top_k = np.argsort(-similarities, axis=1, kind="stable")[:, :k]
             similarities = np.take_along_axis(similarities, top_k, axis=1)
-            ratings = np.take_along_axis(ratings, top_k, axis=1)
+            deviations = np.take_along_axis(deviations, top_k, axis=1)
 
-        # KNNBasic ignores neighbours with non-positive similarity.
+        # KNNWithMeans ignores neighbours with non-positive similarity.
         similarities = np.clip(similarities, 0, None)
         sim_sums = similarities.sum(axis=1)
 
         scores = np.full(len(candidate_movies), -np.inf)
         scorable = sim_sums > 0
-        scores[scorable] = (
-            (similarities * ratings).sum(axis=1)[scorable] / sim_sums[scorable]
+        scores[scorable] = candidate_means[scorable] + (
+            (similarities * deviations).sum(axis=1)[scorable] / sim_sums[scorable]
         )
 
         seen_movies = seen_by_user.get(user_id, set())
