@@ -1,5 +1,6 @@
 from pathlib import Path
 import math
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from surprise import Dataset, KNNBasic, Prediction, Reader, accuracy
@@ -258,7 +259,12 @@ def print_prediction_quality(split_name: str, predictions: list[Prediction]) -> 
     print(f"{split_name} impossible predictions: {n_impossible} of {len(predictions)}")
 
 
-def item_based_knn_baseline(ratings_train: pd.DataFrame, ratings_validation: pd.DataFrame, ratings_test: pd.DataFrame) -> KNNBasic:
+
+def item_based_knn_baseline(
+        ratings_train: pd.DataFrame, 
+        ratings_validation: pd.DataFrame, 
+        movies: pd.DataFrame
+    ) -> KNNBasic:
     """
     Implement an item-based kNN baseline recommender system.
 
@@ -286,47 +292,137 @@ def item_based_knn_baseline(ratings_train: pd.DataFrame, ratings_validation: pd.
     )
     model.fit(training_set)
 
-    validation_set = list(ratings_validation[rating_columns].itertuples(index=False, name=None))
-    validation_predictions = model.test(validation_set)
-    print_prediction_quality("Validation", validation_predictions)
+    # validation for choosing k and similarity measure
+    # Neighborhood size k and similarity measure are chosen using validation result, so test stays unbiased.
+    predictions_valid = item_based_knn_recommend(
+        model=model,
+        ratings_history=ratings_train,
+        user_ids=ratings_validation["user_id"].unique(),
+        catalogue=movies["movie_id"],
+        top_n=10,
+    )
+    print("\n========== Item-based kNN (validation, all users) ==========")
+    metric_evaluation(
+        predictions=predictions_valid,
+        ground_truth=ratings_validation,
+        catalogue=movies["movie_id"],
+        k=10,
+        relevance_threshold=4,
+    )
 
-    # Neighborhood size k and similarity measure are chosen before reading this result, so test stays unbiased.
-    # TODO: to be adapted with the evaluation protocol to be implemented.
-    test_set = list(ratings_test[rating_columns].itertuples(index=False, name=None))
-    test_predictions = model.test(test_set)
-    print_prediction_quality("Test", test_predictions)
+    # Refit on train + validation
+    combined_ratings = pd.concat([ratings_train, ratings_validation], ignore_index=True)
+    combined_set = Dataset.load_from_df(combined_ratings[rating_columns], reader)
+    combined_set = combined_set.build_full_trainset()
+    model.fit(combined_set)
 
     return model
 
 
-def item_based_knn_predict(model: KNNBasic, ratings: pd.DataFrame) -> pd.DataFrame:
+def item_based_knn_recommend(
+        model: KNNBasic,
+        ratings_history: pd.DataFrame,
+        user_ids,
+        catalogue: pd.Series,
+        top_n: int = 10,
+) -> pd.DataFrame:
     """
-    Predict ratings for each user/movie pair in ratings and rank them per user.
+    Recommend the top-n unseen catalogue movies per user with item-based kNN.
 
-    Impossible predictions are dropped. The result has user_id, movie_id,
-    rating, predicted_rating, was_impossible and rank columns.
+    Every candidate movie is scored with the KNNBasic formula: the weighted
+    mean of the user's ratings on the k most similar movies they rated,
+    counting only positive similarities. This matches model.predict, but
+    runs on the whole catalogue at once instead of one pair at a time.
+
+    Movies the model never saw, movies without a positive neighbour, and
+    users the model never saw get no score, so some users receive fewer
+    than top_n recommendations. The output has the same columns as
+    recommend_popular: user_id, movie_id, rank, score.
     """
-    rating_columns = ["user_id", "movie_id", "rating"]
-    rating_set = list(ratings[rating_columns].itertuples(index=False, name=None))
-    predictions = model.test(rating_set)
+    if top_n < 1:
+        raise ValueError("top_n must be at least 1.")
 
-    predictions_df = pd.DataFrame(
-        {
-            "user_id": [p.uid for p in predictions],
-            "movie_id": [p.iid for p in predictions],
-            "rating": [p.r_ui for p in predictions],
-            "predicted_rating": [p.est for p in predictions],
-            "was_impossible": [p.details["was_impossible"] for p in predictions],
-        }
+    trainset = model.trainset
+    k = model.k
+
+    # Include every historical rating, including low ratings.
+    seen_by_user = (
+        ratings_history.groupby("user_id")["movie_id"]
+        .agg(set)
+        .to_dict()
     )
 
-    rankings = predictions_df[~predictions_df["was_impossible"]].sort_values(
-        ["user_id", "predicted_rating", "movie_id"],
-        ascending=[True, False, True],
-        ignore_index=True,
+    # Candidates are the catalogue movies the model knows, ordered by
+    # movie_id so that a stable sort breaks score ties by movie_id.
+    inner_by_movie = {
+        trainset.to_raw_iid(inner_id): inner_id
+        for inner_id in trainset.all_items()
+    }
+    candidate_movies = np.array(
+        sorted(set(catalogue) & inner_by_movie.keys())
     )
-    rankings["rank"] = rankings.groupby("user_id").cumcount() + 1
-    return rankings
+    candidate_inner = np.array(
+        [inner_by_movie[movie_id] for movie_id in candidate_movies],
+        dtype=int,
+    )
+    candidate_sim = model.sim[candidate_inner]
+
+    inner_by_user = {
+        trainset.to_raw_uid(inner_id): inner_id
+        for inner_id in trainset.all_users()
+    }
+
+    recommendations = []
+
+    for user_id in pd.Series(user_ids).unique():
+        inner_uid = inner_by_user.get(user_id)
+        if inner_uid is None:
+            continue
+
+        rated_inner, rated_ratings = map(np.array, zip(*trainset.ur[inner_uid]))
+        similarities = candidate_sim[:, rated_inner.astype(int)]
+        ratings = np.broadcast_to(rated_ratings, similarities.shape)
+
+        # Keep each candidate's k most similar rated movies. The stable sort
+        # breaks similarity ties in rating order, as KNNBasic does.
+        if similarities.shape[1] > k:
+            top_k = np.argsort(-similarities, axis=1, kind="stable")[:, :k]
+            similarities = np.take_along_axis(similarities, top_k, axis=1)
+            ratings = np.take_along_axis(ratings, top_k, axis=1)
+
+        # KNNBasic ignores neighbours with non-positive similarity.
+        similarities = np.clip(similarities, 0, None)
+        sim_sums = similarities.sum(axis=1)
+
+        scores = np.full(len(candidate_movies), -np.inf)
+        scorable = sim_sums > 0
+        scores[scorable] = (
+            (similarities * ratings).sum(axis=1)[scorable] / sim_sums[scorable]
+        )
+
+        seen_movies = seen_by_user.get(user_id, set())
+        scores[np.isin(candidate_movies, list(seen_movies))] = -np.inf
+
+        best = np.argsort(-scores, kind="stable")[:top_n]
+        best = best[np.isfinite(scores[best])]
+
+        recommendations.append(
+            pd.DataFrame(
+                {
+                    "user_id": user_id,
+                    "movie_id": candidate_movies[best],
+                    "rank": np.arange(1, len(best) + 1),
+                    "score": scores[best],
+                }
+            )
+        )
+
+    columns = ["user_id", "movie_id", "rank", "score"]
+
+    if not recommendations:
+        return pd.DataFrame(columns=columns)
+
+    return pd.concat(recommendations, ignore_index=True)[columns]
 
 
 def most_rated_baseline(
@@ -606,17 +702,47 @@ def metric_evaluation(
 
     return results
 
+def metric_evaluation_warm_users(
+    predictions: pd.DataFrame,
+    ground_truth: pd.DataFrame,
+    ratings_history: pd.DataFrame,
+    catalogue: pd.Series,
+    k: int = 10,
+    relevance_threshold: int = 4,
+) -> dict[str, float | int]:
+    """
+    Evaluate top-k recommendations on warm users only.
+
+    Cold-start users, who have no ratings in ratings_history, are removed
+    from the predictions and the ground truth before calling
+    metric_evaluation. Use it with the history the model was trained on.
+    """
+    warm_users = set(ratings_history["user_id"])
+
+    is_warm = ground_truth["user_id"].isin(warm_users)
+    n_cold_users = ground_truth.loc[~is_warm, "user_id"].nunique()
+    print(f"Cold-start test users removed: {n_cold_users}")
+
+    return metric_evaluation(
+        predictions=predictions[predictions["user_id"].isin(warm_users)],
+        ground_truth=ground_truth[is_warm],
+        catalogue=catalogue,
+        k=k,
+        relevance_threshold=relevance_threshold,
+    )
+
 def run_final_evaluation(
     kNN_result: pd.DataFrame,
     most_rated_result: pd.DataFrame,
     most_positive_result: pd.DataFrame,
     ground_truth: pd.DataFrame,
     catalogue: pd.Series,
+    ratings_history: pd.DataFrame,
     k: int = 10,
     threshold: int = 4,
 ) -> None:
     baselines = [
-        ("Item-based kNN", kNN_result),
+        ("Item-based kNN (all users)", kNN_result),
         ("Most-rated Item", most_rated_result),
         ("Most positive rated Item", most_positive_result)
     ]
@@ -630,4 +756,16 @@ def run_final_evaluation(
             k=k,
             relevance_threshold=threshold,
         )
+
+    # kNN cannot recommend to users without training ratings, so also
+    # report its metrics on warm users only.
+    print("\n========== Item-based kNN (warm users only) ==========")
+    metric_evaluation_warm_users(
+        predictions=kNN_result,
+        ground_truth=ground_truth,
+        ratings_history=ratings_history,
+        catalogue=catalogue,
+        k=k,
+        relevance_threshold=threshold,
+    )
 

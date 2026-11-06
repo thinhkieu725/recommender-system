@@ -25,35 +25,44 @@ def main() -> None:
     p1.characterize_data(users, movies, ratings)
 
     ratings_train, ratings_validation, ratings_test = p1.split_data_temporally(ratings)
-    item_based_knn_model = p1.item_based_knn_baseline(ratings_train, ratings_validation, ratings_test)
-    ib_knn_test_rankings = p1.item_based_knn_predict(item_based_knn_model, ratings_test)
+    item_based_knn_model = p1.item_based_knn_baseline(ratings_train, ratings_validation, movies)
 
+    ratings_train_vaild = pd.concat([ratings_train, ratings_validation], ignore_index=True)
     # Most-popular baseline
-    most_rated_ranking = p1.most_rated_baseline(ratings_train, movies)
-    most_positive_ranking = p1.most_positively_rated(ratings_train, movies)
+    # Since the most popular items do not need tuning and validation, both training and validation sets are used to compute the ranking.
+    most_rated_ranking = p1.most_rated_baseline(ratings_train_vaild, movies)
+    most_positive_ranking = p1.most_positively_rated(ratings_train_vaild, movies)
 
     test_users = ratings_test["user_id"].unique()
     # Output to pass to evaluate
+    knn_recommendations = p1.item_based_knn_recommend(
+        model=item_based_knn_model,
+        ratings_history=ratings_train_vaild,
+        user_ids=test_users,
+        catalogue=movies["movie_id"],
+        top_n=10,
+    )
     most_rated_recommendations = p1.recommend_popular(
         ranking=most_rated_ranking,
-        ratings_history=ratings_train,
+        ratings_history=ratings_train_vaild,
         user_ids=test_users,
         top_n=10,
     )
     most_positive_recommendations = p1.recommend_popular(
         ranking=most_positive_ranking,
-        ratings_history=ratings_train,
+        ratings_history=ratings_train_vaild,
         user_ids=test_users,
         top_n=10,
     )
 
     # Evaluation
     p1.run_final_evaluation(
-        ib_knn_test_rankings,
+        knn_recommendations,
         most_rated_recommendations,
         most_positive_recommendations,
         ratings_test,
         movies["movie_id"],
+        ratings_history=ratings_train_vaild,
         k=10,
         threshold=4
     )
