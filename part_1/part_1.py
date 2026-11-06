@@ -258,7 +258,7 @@ def print_prediction_quality(split_name: str, predictions: list[Prediction]) -> 
     print(f"{split_name} impossible predictions: {n_impossible} of {len(predictions)}")
 
 
-def item_based_knn_baseline(ratings_train: pd.DataFrame, ratings_validation: pd.DataFrame, ratings_test: pd.DataFrame) -> None:
+def item_based_knn_baseline(ratings_train: pd.DataFrame, ratings_validation: pd.DataFrame, ratings_test: pd.DataFrame) -> KNNBasic:
     """
     Implement an item-based kNN baseline recommender system.
 
@@ -297,6 +297,37 @@ def item_based_knn_baseline(ratings_train: pd.DataFrame, ratings_validation: pd.
     print_prediction_quality("Test", test_predictions)
 
     return model
+
+
+def item_based_knn_predict(model: KNNBasic, ratings: pd.DataFrame) -> pd.DataFrame:
+    """
+    Predict ratings for each user/movie pair in ratings and rank them per user.
+
+    Impossible predictions are dropped. The result has user_id, movie_id,
+    rating, predicted_rating, was_impossible and rank columns.
+    """
+    rating_columns = ["user_id", "movie_id", "rating"]
+    rating_set = list(ratings[rating_columns].itertuples(index=False, name=None))
+    predictions = model.test(rating_set)
+
+    predictions_df = pd.DataFrame(
+        {
+            "user_id": [p.uid for p in predictions],
+            "movie_id": [p.iid for p in predictions],
+            "rating": [p.r_ui for p in predictions],
+            "predicted_rating": [p.est for p in predictions],
+            "was_impossible": [p.details["was_impossible"] for p in predictions],
+        }
+    )
+
+    rankings = predictions_df[~predictions_df["was_impossible"]].sort_values(
+        ["user_id", "predicted_rating", "movie_id"],
+        ascending=[True, False, True],
+        ignore_index=True,
+    )
+    rankings["rank"] = rankings.groupby("user_id").cumcount() + 1
+    return rankings
+
 
 def most_rated_baseline(
         ratings_train: pd.DataFrame,
@@ -575,5 +606,28 @@ def metric_evaluation(
 
     return results
 
+def run_final_evaluation(
+    kNN_result: pd.DataFrame,
+    most_rated_result: pd.DataFrame,
+    most_positive_result: pd.DataFrame,
+    ground_truth: pd.DataFrame,
+    catalogue: pd.Series,
+    k: int = 10,
+    threshold: int = 4,
+) -> None:
+    baselines = [
+        ("Item-based kNN", kNN_result),
+        ("Most-rated Item", most_rated_result),
+        ("Most positive rated Item", most_positive_result)
+    ]
 
+    for model_name, predictions in baselines:
+        print(f"\n========== {model_name.capitalize()} ==========")
+        metric_evaluation(
+            predictions=predictions,
+            ground_truth=ground_truth,
+            catalogue=catalogue,
+            k=k,
+            relevance_threshold=threshold,
+        )
 
