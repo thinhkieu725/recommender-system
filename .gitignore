@@ -2,7 +2,7 @@ slides/
 data/
 .idea
 .venv
-*.pdf
+RecSys-Project.pdf
 __pycache__/
 .misc/
 .vscode/
