@@ -11,7 +11,7 @@ REQUIRED_DATA_FILES = ("ratings.dat", "movies.dat", "users.dat")
 
 # Tuned hyperparameters
 # k tuned on validation NDCG@10 (warm users, train-only fit) over 5-200.
-NEIGHBORHOOD_SIZE_K = 20
+NEIGHBORHOOD_SIZE_K = 21
 SIMILARITY_MEASURE = "pearson"  # "cosine", "msd", "pearson", "pearson_baseline"
 MIN_SUPPORT = 10
 

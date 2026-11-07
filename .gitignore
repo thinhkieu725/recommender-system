@@ -6,3 +6,4 @@ data/
 __pycache__/
 .misc/
 .vscode/
+.DS_Store
