@@ -38,3 +38,8 @@ Run the full pipeline, passing the folder that holds the `.dat` files. For examp
 python run_all.py --data-dir data
 ```
 
+## Report and deliverables
+
+The online version of the report (updated by progress) is available here: https://tuni-my.sharepoint.com/:w:/g/personal/thinh_kieu_tuni_fi/IQC_ADOi9-qQQaiSvtbzi-R2AUEQSeUp_zPaiOACLS1eeN0?e=cveboe.
+
+The online version of the result spreadsheet (updated by progress) is available here: https://tuni-my.sharepoint.com/:x:/g/personal/thinh_kieu_tuni_fi/IQCezm202h_nS4SJrDQcPeYwAUQ3ZINhiafv4jfPM7H8tM4?e=hQtCSv
