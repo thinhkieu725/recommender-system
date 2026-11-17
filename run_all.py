@@ -3,6 +3,10 @@ from pathlib import Path
 import pandas as pd
 import part_1.part_1 as p1
 
+import part_2.markov as mc
+
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Recommender system project full run on MovieLens 1M dataset."
@@ -39,6 +43,25 @@ def run_final_evaluation(
             k=k,
             relevance_threshold=threshold,
         )
+
+def run_markov_evaluation(
+    predictions: pd.DataFrame,
+    ground_truth: pd.DataFrame,
+    catalogue: pd.Series,
+    k: int = 10,
+    threshold: int = 4,
+) -> None:
+    """Evaluate Markov recommendations using the shared top-k metrics."""
+    print("\n========== Markov ==========")
+    p1.metric_evaluation(
+        predictions=predictions,
+        ground_truth=ground_truth,
+        catalogue=catalogue,
+        k=k,
+        relevance_threshold=threshold,
+    )
+
+
 def main() -> None:
     args = parse_args()
 
@@ -90,6 +113,19 @@ def main() -> None:
         top_n=10,
     )
 
+    markov_models = mc.fit_markov_models(ratings_train)
+    markov_recommendations = mc.recommend_markov(
+        models=markov_models,
+        ratings_history=ratings_train,
+        user_ids=test_users,
+        catalogue=movies["movie_id"],
+        order=1,                 # Try 2 for second order
+        history_mode="recent",   # Or "full"
+        recent_n=5,
+        top_n=10,
+    )
+
+
     # Evaluation
     run_final_evaluation(
         test_rankings,
@@ -99,6 +135,14 @@ def main() -> None:
         movies["movie_id"],
         k=10,
         threshold=4
+    )
+
+    run_markov_evaluation(
+        predictions=markov_recommendations,
+        ground_truth=ratings_test,
+        catalogue=movies["movie_id"],
+        k=10,
+        threshold=4,
     )
 
 if __name__ == "__main__":
