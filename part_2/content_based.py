@@ -1,7 +1,7 @@
 import part_1
 from part_1 import utils
 from scipy.stats import ttest_rel
-from part_1.part_1 import _ndcg_at_k
+from part_1.part_1 import _ndcg_at_k, metric_evaluation
 
 import numpy as np
 import pandas as pd
@@ -170,6 +170,9 @@ def recommend_for_users(
 
 #--- Variability report: statistical paired test---
 def ranked_movies_by_user(recommendations: pd.DataFrame):
+    """
+    Reformat the DataFrame for compatibility with ndcg computation method
+    """
     return (
         recommendations.sort_values(["user_id", "rank"])
         .groupby("user_id")["movie_id"]
@@ -216,3 +219,22 @@ def compare_test_ndcg(content_recommendations, baseline_recommendations, ratings
         "ci_95": (float(interval.low), float(interval.high)),
         "p_value": float(test.pvalue),
     }
+
+#--- Disaggregated results
+def evaluate_test_slice(label,
+                        test_slice: pd.DataFrame,
+                        recommendations: pd.DataFrame,
+                        catalogue):
+    slice_users = test_slice["user_id"].unique()
+    slice_recommendations = recommendations[
+        recommendations["user_id"].isin(slice_users)
+    ]
+
+    print(f"\n========== {label} ==========")
+    return metric_evaluation(
+        predictions=slice_recommendations,
+        ground_truth=test_slice,
+        catalogue=catalogue,
+        k=10,
+        relevance_threshold=4,
+    )

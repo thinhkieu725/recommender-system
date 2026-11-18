@@ -69,7 +69,9 @@ def main() -> None:
     #     threshold=4
     # )
 
-    # --- Part 2: Content-based model recommendation ---
+    # --- PART 2: Three models---
+
+    # -- Content-based recommender --
     # Multi-hot genres encoding and One-hot decades encoding
     features = p2.encoding_movie_features(movies)
 
@@ -87,7 +89,7 @@ def main() -> None:
         movie_features=features,
         top_n=10,
     )
-    # Evaluate the full-history recommendations against test ratings.
+    # Evaluate the full-history recommendations against test ratings
     # print("\n========== Content-based test ==========")
     # p1.metric_evaluation(
     #     predictions=content_based_recommendations,
@@ -98,12 +100,60 @@ def main() -> None:
     # )
 
     # Variability report
-    paired_comparison = p2.compare_test_ndcg(content_based_recommendations,
-                         most_positive_recommendations,
-                         ratings_test
-                        )
-    print(paired_comparison)
+    # paired_comparison = p2.compare_test_ndcg(content_based_recommendations,
+    #                      most_positive_recommendations,
+    #                      ratings_test
+    #                     )
+    # print(paired_comparison)
 
+    # Disaggregated results - low vs high activity users
+    # history_counts = (
+    #     ratings_train_valid.groupby("user_id")
+    #     .size()
+    #     .reindex(test_users, fill_value=0)
+    # )
+    #
+    # # Define the cut-off point using median
+    # median_count = history_counts[history_counts > 0].median()
+    # print(f"User activity cutoff: {median_count} historical ratings")
+    #
+    # activity_groups = {
+    #     "No history": history_counts == 0,
+    #     "Lower activity": (history_counts > 0) & (history_counts <= median_count),
+    #     "Higher activity": history_counts > median_count,
+    # }
+    #
+    # for label, group_mask in activity_groups.items():
+    #     group_users = history_counts.index[group_mask]
+    #     if len(group_users) == 0:
+    #         continue
+    #
+    #     test_slice = ratings_test[ratings_test["user_id"].isin(group_users)]
+    #     p2.evaluate_test_slice(
+    #         label,
+    #         test_slice,
+    #         content_based_recommendations,
+    #         movies["movie_id"]
+    #     )
+    #
+    # # Disaggregated results - early vs test period
+    # sorted_timestamps = ratings_test["timestamp"].sort_values()
+    #
+    # # Define cut-off point using timestamp
+    # middle_timestamp = sorted_timestamps.iloc[len(sorted_timestamps) // 2]
+    #
+    # test_periods = {
+    #     "Early test": ratings_test[ratings_test["timestamp"] < middle_timestamp],
+    #     "Late test": ratings_test[ratings_test["timestamp"] >= middle_timestamp],
+    # }
+    #
+    # for label, test_slice in test_periods.items():
+    #     p2.evaluate_test_slice(
+    #         label,
+    #         test_slice,
+    #         content_based_recommendations,
+    #         movies["movie_id"]
+    #     )
 
 if __name__ == "__main__":
     main()
