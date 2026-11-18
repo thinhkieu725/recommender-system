@@ -30,13 +30,13 @@ def main() -> None:
     #
     ratings_train_valid = pd.concat([ratings_train, ratings_validation], ignore_index=True)
 
-    # # Most-popular baseline
-    # # Since the most popular items do not need tuning and validation, both training and validation sets are used to compute the ranking.
+    # Most-popular baseline
+    # Since the most popular items do not need tuning and validation, both training and validation sets are used to compute the ranking.
     # most_rated_ranking = p1.most_rated_baseline(ratings_train_vaild, movies)
-    # most_positive_ranking = p1.most_positively_rated(ratings_train_vaild, movies)
+    most_positive_ranking = p1.most_positively_rated(ratings_train_valid, movies)
     #
     test_users = ratings_test["user_id"].unique()
-    # # Output to pass to evaluate
+    # Output to pass to evaluate
     # knn_recommendations = p1.item_based_knn_recommend(
     #     model=item_based_knn_model,
     #     ratings_history=ratings_train_vaild,
@@ -48,16 +48,16 @@ def main() -> None:
     #     ranking=most_rated_ranking,
     #     ratings_history=ratings_train_vaild,
     #     user_ids=test_users,
-    #     top_n=10,
+    #     top_n=10
     # )
-    # most_positive_recommendations = p1.recommend_popular(
-    #     ranking=most_positive_ranking,
-    #     ratings_history=ratings_train_vaild,
-    #     user_ids=test_users,
-    #     top_n=10,
-    # )
-    #
-    # # Evaluation
+    most_positive_recommendations = p1.recommend_popular(
+        ranking=most_positive_ranking,
+        ratings_history=ratings_train_valid,
+        user_ids=test_users,
+        top_n=10,
+    )
+
+    # Evaluation
     # p1.run_final_evaluation(
     #     knn_recommendations,
     #     most_rated_recommendations,
@@ -81,22 +81,28 @@ def main() -> None:
 
     # Evaluate recommended movies to validation users using full history
     valid_users = ratings_validation["user_id"].unique()
-    recommendations = p2.recommend_for_users(
+    content_based_recommendations = p2.recommend_for_users(
         user_ids=test_users,
         ratings_history=ratings_train_valid,
         movie_features=features,
         top_n=10,
     )
+    # Evaluate the full-history recommendations against test ratings.
+    # print("\n========== Content-based test ==========")
+    # p1.metric_evaluation(
+    #     predictions=content_based_recommendations,
+    #     ground_truth=ratings_test,
+    #     catalogue=movies["movie_id"],
+    #     k=10,
+    #     relevance_threshold=4,
+    # )
 
-    # Evaluate the recommendations against validation ratings.
-    print("\n========== Content-based validation ==========")
-    p1.metric_evaluation(
-        predictions=recommendations,
-        ground_truth=ratings_test,
-        catalogue=movies["movie_id"],
-        k=10,
-        relevance_threshold=4,
-    )
+    # Variability report
+    paired_comparison = p2.compare_test_ndcg(content_based_recommendations,
+                         most_positive_recommendations,
+                         ratings_test
+                        )
+    print(paired_comparison)
 
 
 if __name__ == "__main__":
