@@ -74,11 +74,6 @@ def main() -> None:
     valid_users = ratings_validation["user_id"].unique()
     # Multi-hot genres encoding and One-hot decades encoding
     features = p2.encoding_movie_features(movies)
-    # Adding weight for decade feature
-    decade_weight = 2
-    for column in features.columns:
-        if column.startswith("decade_"):
-            features[column] = features[column] * decade_weight
 
     # Evaluate recommended movies to validation users using full history
     content_based_recommendations = p2.recommend_for_users(
@@ -98,6 +93,7 @@ def main() -> None:
     )
 
     # Variability report
+    print("\n========== Variablity report ==========")
     paired_comparison = compare_test_ndcg(
         content_based_recommendations,
         most_positive_recommendations,
@@ -117,6 +113,7 @@ def main() -> None:
         model_recommendations = content_based_recommendations,
         catalogue = movies["movie_id"]
     )
+
     # Sparsity-ablation
     ablation_seed = 42
     shuffled_history = ratings_train_valid.sample(frac=1, random_state=ablation_seed)
