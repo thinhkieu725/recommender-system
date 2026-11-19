@@ -1,7 +1,6 @@
-import part_1
-from part_1 import utils
 from scipy.stats import ttest_rel
-from part_1.part_1 import _ndcg_at_k, metric_evaluation
+from part_1.part_1 import metric_evaluation
+
 
 import numpy as np
 import pandas as pd
@@ -51,7 +50,6 @@ def build_user_profile(
     user_ratings = ratings_history[
         ratings_history["user_id"] == user_id
         ]
-
     # A user without history has no content-based profile.
     if user_ratings.empty:
         return pd.Series(0.0, index=features.columns)
@@ -143,7 +141,6 @@ def recommend_for_user(
 
     return recommendations[columns]
 
-
 def recommend_for_users(
     user_ids,
     ratings_history: pd.DataFrame,
@@ -168,63 +165,12 @@ def recommend_for_users(
 
     return pd.concat(recommendations, ignore_index=True)
 
-#--- Variability report: statistical paired test---
-def ranked_movies_by_user(recommendations: pd.DataFrame):
-    """
-    Reformat the DataFrame for compatibility with ndcg computation method
-    """
-    return (
-        recommendations.sort_values(["user_id", "rank"])
-        .groupby("user_id")["movie_id"]
-        .agg(list)
-        .to_dict()
-    )
-
-def compare_test_ndcg(content_recommendations, baseline_recommendations, ratings_test):
-    """Compare content-based minus baseline NDCG@10 on paired test users."""
-
-    content_by_user = ranked_movies_by_user(content_recommendations)
-    baseline_by_user = ranked_movies_by_user(baseline_recommendations)
-
-    content_scores = []
-    baseline_scores = []
-
-    for user_id, ratings in ratings_test.groupby("user_id"):
-        # Match the evaluator's eligibility rule.
-        if not (ratings["rating"] >= 4).any():
-            continue
-
-        user_ratings = dict(zip(ratings["movie_id"], ratings["rating"]))
-        content_scores.append(
-            _ndcg_at_k(content_by_user.get(user_id, []), user_ratings, k=10)
-        )
-        baseline_scores.append(
-            _ndcg_at_k(baseline_by_user.get(user_id, []), user_ratings, k=10)
-        )
-
-    if len(content_scores) < 2:
-        raise ValueError("At least two eligible test users are required.")
-
-    test = ttest_rel(content_scores, baseline_scores)
-    interval = test.confidence_interval(confidence_level=0.95)
-
-    content_mean = float(np.mean(content_scores))
-    baseline_mean = float(np.mean(baseline_scores))
-
-    return {
-        "evaluated_users": len(content_scores),
-        "content_ndcg": content_mean,
-        "baseline_ndcg": baseline_mean,
-        "mean_difference": content_mean - baseline_mean,
-        "ci_95": (float(interval.low), float(interval.high)),
-        "p_value": float(test.pvalue),
-    }
-
-#--- Disaggregated results
+#--- Disaggregated results ---
 def evaluate_test_slice(label,
                         test_slice: pd.DataFrame,
                         recommendations: pd.DataFrame,
-                        catalogue):
+                        catalogue
+    ):
     slice_users = test_slice["user_id"].unique()
     slice_recommendations = recommendations[
         recommendations["user_id"].isin(slice_users)
@@ -238,3 +184,87 @@ def evaluate_test_slice(label,
         k=10,
         relevance_threshold=4,
     )
+
+def evaluate_by_user_activity(ratings_history,
+                              ratings_test,
+                              model_recommendations,
+                              catalogue
+    ):
+    """Evaluate test users grouped by their historical rating count."""
+    test_users = ratings_test["user_id"].unique()
+    history_counts = (
+        ratings_history.groupby("user_id")
+        .size()
+        .reindex(test_users, fill_value=0)
+    )
+    median_count = history_counts[history_counts > 0].median()
+    print(f"User activity cutoff: {median_count:g} historical ratings")
+
+    groups = {
+        "No history": history_counts == 0,
+        "Lower activity": (history_counts > 0) & (history_counts <= median_count),
+        "Higher activity": history_counts > median_count,
+    }
+
+    for label, mask in groups.items():
+        group_users = history_counts.index[mask]
+        if len(group_users) == 0:
+            continue
+
+        test_slice = ratings_test[ratings_test["user_id"].isin(group_users)]
+        evaluate_test_slice(label = label,
+                            test_slice= test_slice,
+                            recommendations = model_recommendations,
+                            catalogue = catalogue
+        )
+
+
+def evaluate_by_test_period(ratings_test,
+                            model_recommendations,
+                            catalogue
+    ):
+    """Evaluate test ratings before and from the middle timestamp."""
+    timestamps = ratings_test["timestamp"].sort_values()
+    cutoff = timestamps.iloc[len(timestamps) // 2]
+    is_early = ratings_test["timestamp"] < cutoff
+
+    periods = {
+        "Early test": ratings_test[is_early],
+        "Late test": ratings_test[ratings_test["timestamp"] >= cutoff],
+    }
+
+    for label, test_slice in periods.items():
+        if not test_slice.empty:
+            evaluate_test_slice(label = label,
+                                test_slice= test_slice,
+                                recommendations = model_recommendations,
+                                catalogue = catalogue
+                                )
+
+
+#--- Sparsity Ablation ---
+def sparsity_test(test_users,
+                  shuffled_history,
+                  ground_truth,
+                  catalogue,
+                  features):
+    """ Subsample the training interaction to 50% and 20%"""
+    for fraction in (0.50, 0.20):
+        sample_size = int(len(shuffled_history) * fraction)
+        sampled_history = shuffled_history.iloc[:sample_size]
+
+        sparse_recommendations = recommend_for_users(
+            user_ids=test_users,
+            ratings_history=sampled_history,
+            movie_features=features,
+            top_n=10,
+        )
+
+        print(f"\n========== Content-based test, {fraction:.0%} history ==========")
+        metric_evaluation(
+            predictions=sparse_recommendations,
+            ground_truth=ground_truth,
+            catalogue=catalogue,
+            k=10,
+            relevance_threshold=4,
+        )
