@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from part_2.utils import compare_test_ndcg
+from part_2.utils import run_final_variablity
 import pandas as pd
 import part_1.part_1 as p1
 import part_2.content_based as p2
@@ -26,29 +26,32 @@ def main() -> None:
     users, movies, ratings = p1.load_data(args.data_dir)
     # p1.characterize_data(users, movies, ratings)
     ratings_train, ratings_validation, ratings_test = p1.split_data_temporally(ratings)
-    # item_based_knn_model = p1.item_based_knn_baseline(ratings_train, ratings_validation, movies)
-
     ratings_train_valid = pd.concat([ratings_train, ratings_validation], ignore_index=True)
+
+    # kNN baseline
+    item_based_knn_model = p1.item_based_knn_baseline(ratings_train, ratings_validation, movies)
+
     # Most-popular baseline
     # Since the most popular items do not need tuning and validation, both training and validation sets are used to compute the ranking.
-    # most_rated_ranking = p1.most_rated_baseline(ratings_train_vaild, movies)
+    most_rated_ranking = p1.most_rated_baseline(ratings_train_valid, movies)
     most_positive_ranking = p1.most_positively_rated(ratings_train_valid, movies)
 
     test_users = ratings_test["user_id"].unique()
+
     # Output to pass to evaluate
-    # knn_recommendations = p1.item_based_knn_recommend(
-    #     model=item_based_knn_model,
-    #     ratings_history=ratings_train_vaild,
-    #     user_ids=test_users,
-    #     catalogue=movies["movie_id"],
-    #     top_n=10,
-    # )
-    # most_rated_recommendations = p1.recommend_popular(
-    #     ranking=most_rated_ranking,
-    #     ratings_history=ratings_train_vaild,
-    #     user_ids=test_users,
-    #     top_n=10
-    # )
+    knn_recommendations = p1.item_based_knn_recommend(
+        model=item_based_knn_model,
+        ratings_history=ratings_train_valid,
+        user_ids=test_users,
+        catalogue=movies["movie_id"],
+        top_n=10,
+    )
+    most_rated_recommendations = p1.recommend_popular(
+        ranking=most_rated_ranking,
+        ratings_history=ratings_train_valid,
+        user_ids=test_users,
+        top_n=10
+    )
     most_positive_recommendations = p1.recommend_popular(
         ranking=most_positive_ranking,
         ratings_history=ratings_train_valid,
@@ -85,21 +88,22 @@ def main() -> None:
     # Evaluate the full-history recommendations against test ratings
     print("\n========== Content-based final ==========")
     p1.metric_evaluation(
-        predictions=content_based_recommendations,
-        ground_truth=ratings_test,
-        catalogue=movies["movie_id"],
-        k=10,
-        relevance_threshold=4,
+        predictions = content_based_recommendations,
+        ground_truth = ratings_test,
+        catalogue = movies["movie_id"],
+        k = 10,
+        relevance_threshold = 4,
     )
 
     # Variability report
     print("\n========== Variablity report ==========")
-    paired_comparison = compare_test_ndcg(
-        content_based_recommendations,
-        most_positive_recommendations,
-        ratings_test
+    run_final_variablity(
+        model_prediction = content_based_recommendations,
+        kNN_result = knn_recommendations,
+        most_rated_result = most_rated_recommendations,
+        most_positive_result = most_positive_recommendations,
+        ground_truth = ratings_test
     )
-    print(paired_comparison)
 
     # Disaggregated results - low vs high activity users
     p2.evaluate_by_user_activity(
@@ -108,6 +112,7 @@ def main() -> None:
         model_recommendations = content_based_recommendations,
         catalogue = movies["movie_id"]
     )
+    # Disaggregated results - early vs late test period
     p2.evaluate_by_test_period(
         ratings_test = ratings_test,
         model_recommendations = content_based_recommendations,

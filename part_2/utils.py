@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 from scipy.stats import ttest_rel
+from surprise.prediction_algorithms.optimize_baselines import baseline_sgd
+
 from part_1.part_1 import _ndcg_at_k
 
 #--- Variability report: statistical paired test---
@@ -17,12 +19,12 @@ def ranked_movies_by_user(recommendations: pd.DataFrame):
 def compare_test_ndcg(model_recommendations,
                       baseline_recommendations,
                       ratings_test
-    ):
-    """Compare content-based minus baseline NDCG@10 on paired test users."""
-    content_by_user = ranked_movies_by_user(model_recommendations)
+):
+    """Compare models NDCG@10 minus baseline NDCG@10 on paired test users."""
+    model_by_user = ranked_movies_by_user(model_recommendations)
     baseline_by_user = ranked_movies_by_user(baseline_recommendations)
 
-    content_scores = []
+    model_scores = []
     baseline_scores = []
 
     for user_id, ratings in ratings_test.groupby("user_id"):
@@ -31,27 +33,50 @@ def compare_test_ndcg(model_recommendations,
             continue
 
         user_ratings = dict(zip(ratings["movie_id"], ratings["rating"]))
-        content_scores.append(
-            _ndcg_at_k(content_by_user.get(user_id, []), user_ratings, k=10)
+        model_scores.append(
+            _ndcg_at_k(model_by_user.get(user_id, []), user_ratings, k=10)
         )
         baseline_scores.append(
             _ndcg_at_k(baseline_by_user.get(user_id, []), user_ratings, k=10)
         )
 
-    if len(content_scores) < 2:
+    if len(model_scores) < 2:
         raise ValueError("At least two eligible test users are required.")
 
-    test = ttest_rel(content_scores, baseline_scores)
+    test = ttest_rel(model_scores, baseline_scores)
     interval = test.confidence_interval(confidence_level=0.95)
 
-    content_mean = float(np.mean(content_scores))
+    model_mean = float(np.mean(model_scores))
     baseline_mean = float(np.mean(baseline_scores))
 
     return {
-        "evaluated_users": len(content_scores),
-        "content_ndcg": content_mean,
+        "evaluated_users": len(model_scores),
+        "model_ndcg": model_mean,
         "baseline_ndcg": baseline_mean,
-        "mean_difference": content_mean - baseline_mean,
+        "mean_difference": model_mean - baseline_mean,
         "ci_95": (float(interval.low), float(interval.high)),
         "p_value": float(test.pvalue),
     }
+
+def run_final_variablity(
+        model_prediction: pd.DataFrame,
+        kNN_result: pd.DataFrame,
+        most_rated_result: pd.DataFrame,
+        most_positive_result: pd.DataFrame,
+        ground_truth: pd.DataFrame
+) -> None:
+    """ Run variability test for model against 3 baselines"""
+    baselines = [
+        ("Item-based kNN (all users)", kNN_result),
+        ("Most-rated Item", most_rated_result),
+        ("Most positive rated Item", most_positive_result)
+    ]
+
+    for model_name, baseline_prediction in baselines:
+        print(f"\n========== {model_name.capitalize()} ==========")
+        paired_results = compare_test_ndcg(
+            model_recommendations = model_prediction,
+            baseline_recommendations =  baseline_prediction,
+            ratings_test = ground_truth
+        )
+        print(paired_results)

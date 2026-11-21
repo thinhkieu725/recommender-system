@@ -6,8 +6,7 @@ import numpy as np
 import pandas as pd
 
 def encoding_movie_features(movies: pd.DataFrame) -> pd.DataFrame:
-    """
-    Encoding movie genres and release years as binary features"""
+    """Encoding movie genres and release years as binary features"""
     movies = movies.set_index("movie_id")
 
     genre_features = (
@@ -41,12 +40,11 @@ def encoding_movie_features(movies: pd.DataFrame) -> pd.DataFrame:
     return features.astype(float).sort_index()
 
 def build_user_profile(
-        user_id: int,
-        ratings_history: pd.DataFrame,
-        features: pd.DataFrame,
-    ) -> pd.Series:
+    user_id: int,
+    ratings_history: pd.DataFrame,
+    features: pd.DataFrame,
+) -> pd.Series:
     """Build one user's profile from mean-centered historical ratings."""
-
     user_ratings = ratings_history[
         ratings_history["user_id"] == user_id
         ]
@@ -71,9 +69,9 @@ def build_user_profile(
     return weighted_features.sum(axis=0)
 
 def cosine_similarity(
-        user_profile: pd.Series,
-        movie_vector: pd.Series,
-    ) -> float:
+    user_profile: pd.Series,
+    movie_vector: pd.Series,
+) -> float:
     """Compute cosine similarity between user profile and the rated movie's features."""
     dot_product = np.dot(user_profile, movie_vector)
 
@@ -90,7 +88,7 @@ def recommend_for_user(
         ratings_history: pd.DataFrame,
         movie_features: pd.DataFrame,
         top_n: int = 10,
-    ) -> pd.DataFrame:
+) -> pd.DataFrame:
     """Recommend the highest-scoring unseen movies to one user."""
     columns = ["user_id", "movie_id", "rank", "score"]
 
@@ -146,8 +144,7 @@ def recommend_for_users(
     ratings_history: pd.DataFrame,
     movie_features: pd.DataFrame,
     top_n: int = 10,
-    ) -> pd.DataFrame:
-
+) -> pd.DataFrame:
     """Combine the top unseen movies for each requested user."""
     if top_n < 1:
         raise ValueError("top_n must be at least 1.")
@@ -166,11 +163,12 @@ def recommend_for_users(
     return pd.concat(recommendations, ignore_index=True)
 
 #--- Disaggregated results ---
-def evaluate_test_slice(label,
-                        test_slice: pd.DataFrame,
-                        recommendations: pd.DataFrame,
-                        catalogue
-    ):
+def evaluate_test_slice(
+    label,
+    test_slice: pd.DataFrame,
+    recommendations: pd.DataFrame,
+    catalogue
+):
     slice_users = test_slice["user_id"].unique()
     slice_recommendations = recommendations[
         recommendations["user_id"].isin(slice_users)
@@ -185,11 +183,12 @@ def evaluate_test_slice(label,
         relevance_threshold=4,
     )
 
-def evaluate_by_user_activity(ratings_history,
-                              ratings_test,
-                              model_recommendations,
-                              catalogue
-    ):
+def evaluate_by_user_activity(
+    ratings_history,
+    ratings_test,
+    model_recommendations,
+    catalogue
+):
     """Evaluate test users grouped by their historical rating count."""
     test_users = ratings_test["user_id"].unique()
     history_counts = (
@@ -219,10 +218,11 @@ def evaluate_by_user_activity(ratings_history,
         )
 
 
-def evaluate_by_test_period(ratings_test,
-                            model_recommendations,
-                            catalogue
-    ):
+def evaluate_by_test_period(
+    ratings_test,
+    model_recommendations,
+    catalogue
+):
     """Evaluate test ratings before and from the middle timestamp."""
     timestamps = ratings_test["timestamp"].sort_values()
     cutoff = timestamps.iloc[len(timestamps) // 2]
@@ -243,11 +243,13 @@ def evaluate_by_test_period(ratings_test,
 
 
 #--- Sparsity Ablation ---
-def sparsity_test(test_users,
-                  shuffled_history,
-                  ground_truth,
-                  catalogue,
-                  features):
+def sparsity_test(
+    test_users,
+    shuffled_history,
+    ground_truth,
+    catalogue,
+    features
+):
     """ Subsample the training interaction to 50% and 20%"""
     for fraction in (0.50, 0.20):
         sample_size = int(len(shuffled_history) * fraction)
