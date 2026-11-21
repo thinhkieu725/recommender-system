@@ -1,5 +1,6 @@
 slides/
 data/
+results/
 .idea
 .venv
 RecSys-Project.pdf
