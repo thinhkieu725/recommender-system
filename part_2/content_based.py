@@ -1,7 +1,4 @@
-from scipy.stats import ttest_rel
 from part_1.part_1 import metric_evaluation
-
-
 import numpy as np
 import pandas as pd
 

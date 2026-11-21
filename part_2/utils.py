@@ -1,8 +1,6 @@
 import pandas as pd
 import numpy as np
 from scipy.stats import ttest_rel
-from surprise.prediction_algorithms.optimize_baselines import baseline_sgd
-
 from part_1.part_1 import _ndcg_at_k
 
 #--- Variability report: statistical paired test---
