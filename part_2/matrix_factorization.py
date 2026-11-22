@@ -28,6 +28,24 @@ def _build_trainset(ratings: pd.DataFrame):
     return Dataset.load_from_df(shuffled, reader).build_full_trainset()
 
 
+def fit_matrix_factorization(ratings: pd.DataFrame) -> SVD:
+    """
+    Fit an SVD model with the tuned hyperparameters on the given ratings.
+
+    The fixed seed initialises P and Q the same way on every fit.
+    """
+    model = SVD(
+        n_factors=N_FACTORS,
+        n_epochs=N_EPOCHS,
+        biased=True,
+        lr_all=LEARNING_RATE,
+        reg_all=REGULARIZATION,
+        random_state=RANDOM_SEED,
+    )
+    model.fit(_build_trainset(ratings))
+    return model
+
+
 def matrix_factorization_model(
         ratings_train: pd.DataFrame,
         ratings_validation: pd.DataFrame,
@@ -54,16 +72,7 @@ def matrix_factorization_model(
     print(f"Regularization: {REGULARIZATION}")
     print(f"Random seed: {RANDOM_SEED}")
 
-    # The same seed initialises P and Q on both fits.
-    model = SVD(
-        n_factors=N_FACTORS,
-        n_epochs=N_EPOCHS,
-        biased=True,
-        lr_all=LEARNING_RATE,
-        reg_all=REGULARIZATION,
-        random_state=RANDOM_SEED,
-    )
-    model.fit(_build_trainset(ratings_train))
+    model = fit_matrix_factorization(ratings_train)
 
     # Validation for choosing the hyperparameters, so test stays unbiased.
     # SGD minimises squared error, so RMSE shows whether the fit worked;
@@ -90,9 +99,7 @@ def matrix_factorization_model(
 
     # Refit on train + validation
     combined_ratings = pd.concat([ratings_train, ratings_validation], ignore_index=True)
-    model.fit(_build_trainset(combined_ratings))
-
-    return model
+    return fit_matrix_factorization(combined_ratings)
 
 
 def matrix_factorization_recommend(
@@ -109,12 +116,14 @@ def matrix_factorization_recommend(
 
         score(u, i) = mu + b_u + b_i + p_u . q_i
 
-    This matches model.predict for known users and movies, but scores the
-    whole catalogue with one matrix product instead of one call per pair.
+    For known users this matches model.predict (without its clipping to the
+    rating scale), but scores the whole catalogue with one matrix product
+    instead of one call per pair.
 
-    Users and movies the model never saw get no score. model.predict would
-    fall back to the biases there; for an unknown user that is only a
-    popularity ranking, so those users are left out, as in item-based kNN.
+    Cold-start users, whom the model never saw, are scored with model.predict,
+    which falls back to mu + b_i. Their ranking is therefore by item bias, a
+    popularity-like ranking that is the same for every cold-start user.
+    Movies the model never saw are not candidates.
     The output has the same columns as recommend_popular:
     user_id, movie_id, rank, score.
     """
@@ -151,19 +160,28 @@ def matrix_factorization_recommend(
         for inner_id in trainset.all_users()
     }
 
+    # model.predict gives every unknown user the same scores, so they are
+    # computed once, on the first cold-start user, and reused.
+    cold_start_scores = None
+
     recommendations = []
 
     for user_id in pd.Series(user_ids).unique():
         inner_uid = inner_by_user.get(user_id)
         if inner_uid is None:
-            continue
-
-        scores = (
-            trainset.global_mean
-            + model.bu[inner_uid]
-            + candidate_bias
-            + candidate_factors @ model.pu[inner_uid]
-        )
+            if cold_start_scores is None:
+                cold_start_scores = np.array([
+                    model.predict(user_id, movie_id).est
+                    for movie_id in candidate_movies
+                ])
+            scores = cold_start_scores.copy()
+        else:
+            scores = (
+                trainset.global_mean
+                + model.bu[inner_uid]
+                + candidate_bias
+                + candidate_factors @ model.pu[inner_uid]
+            )
 
         seen_movies = seen_by_user.get(user_id, set())
         scores[np.isin(candidate_movies, list(seen_movies))] = -np.inf
@@ -188,3 +206,55 @@ def matrix_factorization_recommend(
         return pd.DataFrame(columns=columns)
 
     return pd.concat(recommendations, ignore_index=True)[columns]
+
+
+def sparsity_test(
+        test_users,
+        shuffled_history: pd.DataFrame,
+        ground_truth: pd.DataFrame,
+        catalogue: pd.Series,
+) -> list[dict]:
+    """
+    Refit the MF on 50% and 20% of the shuffled training interactions and
+    evaluate on the full test set. Hyperparameters stay fixed.
+
+    Taking a prefix of one shuffled ordering makes the samples nested
+    (20% is inside 50%). The subset is also the user history, so seen
+    movies are filtered against what the model was trained on. Test users
+    who lose all their history become cold-start users and get the
+    item-bias ranking from model.predict.
+    """
+    results = []
+
+    for fraction in (0.50, 0.20):
+        sample_size = int(len(shuffled_history) * fraction)
+        sampled_history = shuffled_history.iloc[:sample_size]
+
+        model = fit_matrix_factorization(sampled_history)
+        sparse_recommendations = matrix_factorization_recommend(
+            model=model,
+            ratings_history=sampled_history,
+            user_ids=test_users,
+            catalogue=catalogue,
+            top_n=10,
+        )
+
+        n_cold_start = len(set(test_users) - set(sampled_history["user_id"]))
+        print(f"\n========== Matrix factorization test, {fraction:.0%} history ==========")
+        print(f"Training interactions: {sample_size}")
+        print(f"Cold-start test users (bias-only ranking): {n_cold_start}")
+        metrics = p1.metric_evaluation(
+            predictions=sparse_recommendations,
+            ground_truth=ground_truth,
+            catalogue=catalogue,
+            k=10,
+            relevance_threshold=4,
+        )
+
+        results.append({
+            "training_fraction": fraction,
+            "training_interactions": sample_size,
+            "metrics": metrics,
+        })
+
+    return results
