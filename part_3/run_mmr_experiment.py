@@ -6,38 +6,31 @@ from pathlib import Path
 from part_2.markov import fit_markov_models, recommend_markov
 from part_1.part_1 import metric_evaluation_warm_users
 from part_3.mmr import rerank_mmr
+from part_3.diversity_metrics import evaluate_diversity
 
 
-# ==================================================
 # 1. Experiment configuration
-# ==================================================
-
 CANDIDATE_POOL_SIZE = 100
 RECOMMENDATION_SIZE = 10
 K = 10
 
 LAMBDA_VALUES = np.round(np.arange(0.0, 1.01, 0.1), 2)
 
-
 # Best configuration from Part 2
 MARKOV_CONFIG = {
     "weight_method": "linear",
     "weighting": "none",
-    "group_same_timestamp": False,
+    "group_same_timestamp": True,
 }
 
 RECOMMEND_CONFIG = {
     "order": 1,
     "history_mode": "full",
-    "recent_n": 5,
+    "recent_n": 5, # not really needed 
     "score_weighting": "rating",
 }
 
-
-# ==================================================
 # 2. Generate Markov candidate pool
-# ==================================================
-
 def generate_candidates(
     train: pd.DataFrame,
     movies: pd.DataFrame,
@@ -65,11 +58,7 @@ def generate_candidates(
 
     return candidates
 
-
-# ==================================================
 # 3. Run validation experiment
-# ==================================================
-
 def run_validation_experiment(
     train: pd.DataFrame,
     validation: pd.DataFrame,
@@ -117,9 +106,18 @@ def run_validation_experiment(
             relevance_threshold=4,
         )
 
+        diversity_metrics = evaluate_diversity(
+            predictions=recommendations,
+            ratings_history=train,
+            movies=movies,
+            catalogue=movies["movie_id"],
+            k=K,
+        )
+
         results.append({
             "lambda": float(lambda_),
             **metrics,
+            **diversity_metrics,
         })
 
     results_df = pd.DataFrame(results)
@@ -127,10 +125,84 @@ def run_validation_experiment(
     return candidates, recommendations_by_lambda, results_df
 
 
-# ==================================================
-# 4. Run the experiment
-# ==================================================
+def run_final_test_experiment(
+    train: pd.DataFrame,
+    validation: pd.DataFrame,
+    test: pd.DataFrame,
+    movies: pd.DataFrame,
+    selected_lambda: float,
+):
+    # Combine training and validation history.
+    train_valid = pd.concat(
+        [train, validation],
+        ignore_index=True,
+    )
 
+    # Fit the Markov model using the same protocol
+    # as the original final Markov experiment.
+    models = fit_markov_models(
+        ratings_train=train_valid,
+        **MARKOV_CONFIG,
+    )
+
+    # Generate 100 candidates for the same test users
+    # as the original Markov experiment.
+    candidates = recommend_markov(
+        models=models,
+        ratings_history=train_valid,
+        user_ids=test["user_id"].unique().tolist(),
+        catalogue=movies["movie_id"],
+        top_n=CANDIDATE_POOL_SIZE,
+        fallback_ranking=None,
+        **RECOMMEND_CONFIG,
+    )
+
+    # Original Markov top-10 recommendations.
+    original_recommendations = recommend_markov(
+        models=models,
+        ratings_history=train_valid,
+        user_ids=test["user_id"].unique().tolist(),
+        catalogue=movies["movie_id"],
+        top_n=RECOMMENDATION_SIZE,
+        fallback_ranking=None,
+        **RECOMMEND_CONFIG,
+    )
+
+    original_metrics = p1.metric_evaluation(
+        predictions=original_recommendations,
+        ground_truth=test,
+        catalogue=movies["movie_id"],
+        k=K,
+        relevance_threshold=4,
+    )
+
+    # Apply MMR using the lambda selected on validation.
+    recommendations = rerank_mmr(
+        candidates=candidates,
+        movies=movies,
+        top_n=RECOMMENDATION_SIZE,
+        lambda_=selected_lambda,
+    )
+
+    # Evaluate on the test set.
+    metrics = p1.metric_evaluation(
+        predictions=recommendations,
+        ground_truth=test,
+        catalogue=movies["movie_id"],
+        k=K,
+        relevance_threshold=4,
+    )
+
+    return (
+        candidates,
+        original_recommendations,
+        recommendations,
+        original_metrics,
+        metrics,
+    )
+
+
+# 4. Run the experiment
 import argparse
 
 def parse_args() -> argparse.Namespace:
@@ -165,10 +237,8 @@ if __name__ == "__main__":
         )
     )
 
-    missing_metadata = (
-        set(candidates["movie_id"])
-        - set(movies["movie_id"])
-    )
+    missing_metadata = (set(candidates["movie_id"]) - set(movies["movie_id"]))
+    
     if missing_metadata:
         raise ValueError("Some candidate movies are missing genre metadata.")
     print(f"Candidates missing movie metadata: {len(missing_metadata)}")
@@ -211,3 +281,28 @@ if __name__ == "__main__":
     )
 
     print("\nSaved validation metrics to part_3/validation_metrics.csv")
+
+    best_row = validation_results.loc[
+        validation_results["NDCG@10"].idxmax()
+    ]
+
+    selected_lambda = float(best_row["lambda"])
+
+    print(f"\nSelected lambda: {selected_lambda}")
+    print("\n========== FINAL MMR TEST EVALUATION ==========")
+
+    test_candidates, test_recommendations, test_metrics = (
+        run_final_test_experiment(
+            train=ratings_train,
+            validation=ratings_validation,
+            test=ratings_test,
+            movies=movies,
+            selected_lambda=selected_lambda,
+        )
+    )
+
+    print("\nSelected MMR configuration:")
+    print(f"Lambda: {selected_lambda}")
+    print("\nFinal test metrics:")
+    print(test_metrics)
+    test_recommendations.to_csv("part_3/test_recommendations.csv", index=False)
