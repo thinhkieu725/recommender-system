@@ -30,11 +30,11 @@ RECOMMEND_CONFIG = {
     "score_weighting": "rating",
 }
 
+CACHE_DIR = Path("part_3/cache")
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 # 2. Generate Markov candidate pool
-def generate_candidates(
-    train: pd.DataFrame,
-    movies: pd.DataFrame,
-) -> pd.DataFrame:
+def generate_candidates(train: pd.DataFrame,movies: pd.DataFrame) -> pd.DataFrame:
 
     # Fit Markov model using training data only.
     models = fit_markov_models(
@@ -66,10 +66,23 @@ def run_validation_experiment(
 ):
     # Generate candidates once so every lambda uses
     # exactly the same candidate pool.
-    candidates = generate_candidates(
-        train=train,
-        movies=movies,
-    )
+
+    # generate candidate with cache to reduce runtime
+    candidate_cache = Path("part_3/cache/validation_candidates.pkl")
+
+    if candidate_cache.exists():
+        print("Loading cached validation candidates...")
+        candidates = pd.read_pickle(candidate_cache)
+
+    else:
+        print("Generating validation candidates...")
+        candidates = generate_candidates(
+            train=train,
+            movies=movies,
+        )
+
+        candidate_cache.parent.mkdir(parents=True, exist_ok=True)
+        candidates.to_pickle(candidate_cache)
 
     print("\n========== CANDIDATE GENERATION ==========")
     print(f"Users: {candidates['user_id'].nunique()}")
@@ -86,39 +99,65 @@ def run_validation_experiment(
         print(f"\n========== LAMBDA = {lambda_:.1f} ==========")
 
         # Apply MMR to the candidate pool.
-        recommendations = rerank_mmr(
-            candidates=candidates,
-            movies=movies,
-            top_n=RECOMMENDATION_SIZE,
-            lambda_=float(lambda_),
+        recommendation_cache = Path(
+            f"part_3/cache/validation_recommendations_lambda_{lambda_:.1f}.pkl"
         )
+
+        if recommendation_cache.exists():
+            print(f"Loading cached recommendations for lambda={lambda_:.1f}")
+            recommendations = pd.read_pickle(recommendation_cache)
+
+        else:
+            print(f"No cache, generating recommendations for lambda={lambda_:.1f}")
+
+            recommendations = rerank_mmr(
+                candidates=candidates,
+                movies=movies,
+                top_n=RECOMMENDATION_SIZE,
+                lambda_=float(lambda_),
+            )
+
+            recommendation_cache.parent.mkdir(parents=True, exist_ok=True)
+            recommendations.to_pickle(recommendation_cache)
 
         recommendations_by_lambda[float(lambda_)] = recommendations
 
         # Evaluate on warm users only.
         # Training history determines which users are warm.
-        metrics = metric_evaluation_warm_users(
-            predictions=recommendations,
-            ground_truth=validation,
-            ratings_history=train,
-            catalogue=movies["movie_id"],
-            k=K,
-            relevance_threshold=4,
-        )
+        # Cache the evaluation metrics for this lambda value.
+        metrics_cache = Path(f"part_3/cache/validation_metrics_lambda_{lambda_:.1f}.pkl")
 
-        diversity_metrics = evaluate_diversity(
-            predictions=recommendations,
-            ratings_history=train,
-            movies=movies,
-            catalogue=movies["movie_id"],
-            k=K,
-        )
+        if metrics_cache.exists():
+            print(f"Loading cached metrics for lambda={lambda_:.1f}")
+            result = pd.read_pickle(metrics_cache)
+        else:
+            metrics = metric_evaluation_warm_users(
+                predictions=recommendations,
+                ground_truth=validation,
+                ratings_history=train,
+                catalogue=movies["movie_id"],
+                k=K,
+                relevance_threshold=4,
+            )
 
-        results.append({
-            "lambda": float(lambda_),
-            **metrics,
-            **diversity_metrics,
-        })
+            diversity_metrics = evaluate_diversity(
+                predictions=recommendations,
+                ratings_history=train,
+                movies=movies,
+                catalogue=movies["movie_id"],
+                k=K,
+            )
+
+            result = {
+                "lambda": float(lambda_),
+                **metrics,
+                **diversity_metrics,
+            }
+
+            metrics_cache.parent.mkdir(parents=True, exist_ok=True)
+            pd.to_pickle(result, metrics_cache)
+
+        results.append(result)
 
     results_df = pd.DataFrame(results)
 
@@ -147,6 +186,7 @@ def run_final_test_experiment(
 
     # Generate 100 candidates for the same test users
     # as the original Markov experiment.
+
     candidates = recommend_markov(
         models=models,
         ratings_history=train_valid,
@@ -219,6 +259,8 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
 
+    # IF CHANGES ANYTHING MAJOR IN THE LOGIC, PLEASE REMOVE THE OLD CACHE!
+
     args = parse_args()
 
     # --- PART 1: Data, protocol, baselines ---
@@ -275,34 +317,61 @@ if __name__ == "__main__":
 
     Path("part_3").mkdir(parents=True, exist_ok=True)
 
-    validation_results.to_csv(
-        "part_3/validation_metrics.csv",
-        index=False,
-    )
+    validation_results.to_csv("part_3/validation_metrics.csv", index=False)
 
     print("\nSaved validation metrics to part_3/validation_metrics.csv")
 
-    best_row = validation_results.loc[
-        validation_results["NDCG@10"].idxmax()
+    # Select lambda using an accuracy constraint and a diversity objective.
+
+    NDCG_TOLERANCE = 0.01  # Allow at most 1% relative loss in NDCG.
+
+    best_ndcg = validation_results["NDCG@10"].max()
+    minimum_acceptable_ndcg = best_ndcg * (1 - NDCG_TOLERANCE)
+
+    acceptable_results = validation_results[
+        validation_results["NDCG@10"] >= minimum_acceptable_ndcg
     ]
 
+    # Among acceptable configurations, select the one with highest ILD.
+    best_row = acceptable_results.sort_values(
+        by=["ILD@10", "Calibration Error"],
+        ascending=[False, True],
+    ).iloc[0]
+
     selected_lambda = float(best_row["lambda"])
+
+    print(f"\nBest validation NDCG: {best_ndcg:.6f}")
+    print(f"Minimum acceptable NDCG: {minimum_acceptable_ndcg:.6f}")
+    print("\nAcceptable lambda configurations:")
+    print(
+        acceptable_results[
+            ["lambda", "NDCG@10", "ILD@10", "Calibration Error"]
+        ].to_string(index=False)
+    )
+
+    print(f"\nSelected lambda: {selected_lambda}")
 
     print(f"\nSelected lambda: {selected_lambda}")
     print("\n========== FINAL MMR TEST EVALUATION ==========")
 
-    test_candidates, test_recommendations, test_metrics = (
-        run_final_test_experiment(
-            train=ratings_train,
-            validation=ratings_validation,
-            test=ratings_test,
-            movies=movies,
-            selected_lambda=selected_lambda,
-        )
+    (
+        test_candidates,
+        original_test_recommendations,
+        test_recommendations,
+        original_test_metrics,
+        test_metrics,
+    ) = run_final_test_experiment(
+        train=ratings_train,
+        validation=ratings_validation,
+        test=ratings_test,
+        movies=movies,
+        selected_lambda=selected_lambda,
     )
 
     print("\nSelected MMR configuration:")
     print(f"Lambda: {selected_lambda}")
-    print("\nFinal test metrics:")
+    print("\nOriginal Markov test metrics:")
+    print(original_test_metrics)
+    print("\nMMR test metrics:")
     print(test_metrics)
     test_recommendations.to_csv("part_3/test_recommendations.csv", index=False)
